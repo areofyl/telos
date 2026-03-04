@@ -1,6 +1,7 @@
 void print(const char *s);
 void print_hex(unsigned long val);
 
+// just dump the exception info and hang
 void exception_handler(unsigned long esr, unsigned long elr,
                        unsigned long far) {
   print("EXCEPTION\n");
