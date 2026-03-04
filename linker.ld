@@ -27,4 +27,8 @@ SECTIONS
   . = ALIGN(16);
   . = . + 4096;
   _stack_top = .;
+
+  /* everything after this is free ram for the allocator */
+  . = ALIGN(4096);
+  _kernel_end = .;
 }
