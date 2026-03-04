@@ -1,45 +1,47 @@
 # PebbleOS
 
-a minimal aarch64 kernel written from scratch in C and ARM64 assembly, targeting QEMU's virt machine. no libc, no dependencies — everything from scratch.
+minimal aarch64 kernel from scratch in C and arm64 assembly, runs on QEMU virt. no libc, no dependencies, everything written from scratch.
 
-## what it does right now
+## what it does
 
-- boots on QEMU virt (cortex-a72), drops from EL2 to EL1
-- prints to UART (PL011 at `0x09000000`)
-- exception vector table with sync exception handler
-- timer interrupt via GIC + ARM generic timer (1 tick/second)
+- boots on qemu virt (cortex-a72), drops from EL2 to EL1
+- uart output
+- exception vectors
+- timer interrupt via gic + arm generic timer
+- physical page allocator (bitmap, 4KB pages)
 
-## build and run
+## build
 
-```bash
-make          # build kernel.bin
-make run      # boot in QEMU
-make clean    # clean up
+```
+make
+make run
+make clean
 ```
 
-you need `gcc`, `ld`, `objcopy`, and `qemu-system-aarch64`.
+needs `gcc`, `ld`, `objcopy`, `qemu-system-aarch64`
+
+exit qemu: ctrl+a then x
 
 ## files
 
-| file | what it does |
-|------|-------------|
-| `boot.S` | entry point — EL2 drop, stack setup, vector install, jump to main |
-| `vectors.S` | exception vector table (16 entries, macro-generated) |
-| `main.c` | uart driver + main, sets up gic/timer and unmasks irqs |
-| `exception.c` | sync exception handler — prints ESR/ELR/FAR and halts |
-| `gic.c` | GICv2 setup — distributor, cpu interface, enables IRQ 30 |
-| `timer.c` | ARM generic timer — 1 second countdown, tick counter |
-| `irq.c` | IRQ handler — dispatches on interrupt ID, handles timer ticks |
-| `linker.ld` | memory layout starting at `0x40080000` |
-| `Makefile` | build system |
+- `boot.S` — entry point, EL2 drop, stack, fp/simd enable, vector install
+- `vectors.S` — exception vector table
+- `main.c` — uart driver, main
+- `exception.c` — prints exception info and halts
+- `gic.c` — interrupt controller setup
+- `timer.c` — arm generic timer, 1 sec tick
+- `irq.c` — irq handler
+- `pmm.c` — physical memory allocator
+- `linker.ld` — memory layout
+- `Makefile` — build
 
 ## roadmap
 
-- [x] UART hello world
+- [x] uart hello world
 - [x] exception vectors
 - [x] timer interrupt
-- [ ] physical memory allocator
-- [ ] MMU / virtual memory
+- [x] physical memory allocator
+- [ ] mmu / virtual memory
 - [ ] scheduler
 - [ ] user space (EL0) + syscalls
 - [ ] filesystem (ramdisk)
