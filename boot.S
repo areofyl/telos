@@ -26,6 +26,16 @@ at_el1:
   msr cpacr_el1, x0
   isb
 
+  // zero bss (qemu does this for us but real hw wouldnt)
+  ldr x0, =__bss_start
+  ldr x1, =__bss_end
+bss_loop:
+  cmp x0, x1
+  b.ge bss_done
+  str xzr, [x0], #8
+  b bss_loop
+bss_done:
+
   // set up vector table
   ldr x0, =vectors
   msr vbar_el1, x0
