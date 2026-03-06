@@ -14,5 +14,6 @@ void exception_handler(unsigned long esr, unsigned long elr,
   print("\n");
 
   for (;;) {
+    asm volatile("wfe");
   }
 }
