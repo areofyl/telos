@@ -1,12 +1,12 @@
-// vector table - 16 entries, 0x80 apart, aligned to 2048
-// macro takes a handler param now so irqs go to irq_handler
+// vector table
+// entries are just branches since the full save/restore
+// doesnt fit in 0x80 bytes
 
 .section .text
 
-.macro VECTOR_ENTRY label handler
-.balign 0x80
-\label:
-    // save all caller-saved regs (x0-x18, x29, x30)
+// save everything including sp_el0 (user stack pointer)
+// after this, sp points at the bottom of the trap frame
+.macro SAVE_ALL
     stp x0,  x1,  [sp, #-16]!
     stp x2,  x3,  [sp, #-16]!
     stp x4,  x5,  [sp, #-16]!
@@ -16,14 +16,33 @@
     stp x12, x13, [sp, #-16]!
     stp x14, x15, [sp, #-16]!
     stp x16, x17, [sp, #-16]!
-    stp x18, x29, [sp, #-16]!
-    stp x30, xzr, [sp, #-16]!
-    mrs x0, esr_el1
-    mrs x1, elr_el1
-    mrs x2, far_el1
-    bl \handler
-    ldp x30, xzr, [sp], #16
-    ldp x18, x29, [sp], #16
+    stp x18, x19, [sp, #-16]!
+    stp x20, x21, [sp, #-16]!
+    stp x22, x23, [sp, #-16]!
+    stp x24, x25, [sp, #-16]!
+    stp x26, x27, [sp, #-16]!
+    stp x28, x29, [sp, #-16]!
+    mrs x9,  elr_el1
+    mrs x10, spsr_el1
+    mrs x11, sp_el0
+    stp x30, x9,  [sp, #-16]!
+    stp x10, x11, [sp, #-16]!
+.endm
+
+// restore everything and return
+// if the scheduler swapped sp, this restores a different task
+.macro RESTORE_ALL
+    ldp x10, x11, [sp], #16
+    ldp x30, x9,  [sp], #16
+    msr elr_el1, x9
+    msr spsr_el1, x10
+    msr sp_el0, x11
+    ldp x28, x29, [sp], #16
+    ldp x26, x27, [sp], #16
+    ldp x24, x25, [sp], #16
+    ldp x22, x23, [sp], #16
+    ldp x20, x21, [sp], #16
+    ldp x18, x19, [sp], #16
     ldp x16, x17, [sp], #16
     ldp x14, x15, [sp], #16
     ldp x12, x13, [sp], #16
@@ -39,26 +58,52 @@
 .balign 2048
 .global vectors
 vectors:
-  // current EL, SP_EL0 (not used but need to fill)
-  VECTOR_ENTRY vec_cur_sp0_sync,   exception_handler
-  VECTOR_ENTRY vec_cur_sp0_irq,    irq_handler
-  VECTOR_ENTRY vec_cur_sp0_fiq,    exception_handler
-  VECTOR_ENTRY vec_cur_sp0_serror, exception_handler
+    // current EL, SP_EL0
+    .balign 0x80; b exc_entry
+    .balign 0x80; b irq_entry
+    .balign 0x80; b exc_entry
+    .balign 0x80; b exc_entry
 
-  // current EL, SP_ELx (this is us)
-  VECTOR_ENTRY vec_cur_spx_sync,   exception_handler
-  VECTOR_ENTRY vec_cur_spx_irq,    irq_handler
-  VECTOR_ENTRY vec_cur_spx_fiq,    exception_handler
-  VECTOR_ENTRY vec_cur_spx_serror, exception_handler
+    // current EL, SP_ELx (kernel faults/irqs)
+    .balign 0x80; b exc_entry
+    .balign 0x80; b irq_entry
+    .balign 0x80; b exc_entry
+    .balign 0x80; b exc_entry
 
-  // lower EL aarch64 (userspace later)
-  VECTOR_ENTRY vec_lower64_sync,   exception_handler
-  VECTOR_ENTRY vec_lower64_irq,    irq_handler
-  VECTOR_ENTRY vec_lower64_fiq,    exception_handler
-  VECTOR_ENTRY vec_lower64_serror, exception_handler
+    // lower EL, aarch64 (userspace)
+    .balign 0x80; b svc_entry
+    .balign 0x80; b irq_entry
+    .balign 0x80; b exc_entry
+    .balign 0x80; b exc_entry
 
-  // lower EL aarch32 (not used)
-  VECTOR_ENTRY vec_lower32_sync,   exception_handler
-  VECTOR_ENTRY vec_lower32_irq,    irq_handler
-  VECTOR_ENTRY vec_lower32_fiq,    exception_handler
-  VECTOR_ENTRY vec_lower32_serror, exception_handler
+    // lower EL, aarch32 (not used)
+    .balign 0x80; b exc_entry
+    .balign 0x80; b irq_entry
+    .balign 0x80; b exc_entry
+    .balign 0x80; b exc_entry
+
+// sync exception from kernel - save, dump info, hang
+exc_entry:
+    SAVE_ALL
+    mrs x0, esr_el1
+    mrs x1, elr_el1
+    mrs x2, far_el1
+    bl exception_handler
+    RESTORE_ALL
+
+// irq - save, handle (may switch tasks), restore
+irq_entry:
+    SAVE_ALL
+    mov x0, sp
+    bl irq_handler
+    mov sp, x0
+    RESTORE_ALL
+
+// sync from EL0 - syscalls land here
+// could also be a user fault so the C handler checks ESR
+svc_entry:
+    SAVE_ALL
+    mov x0, sp
+    bl syscall_handler
+    mov sp, x0
+    RESTORE_ALL
