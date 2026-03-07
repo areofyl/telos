@@ -31,6 +31,7 @@ void mmu_init(void);
 void proc_init(void);
 int proc_create(uint32_t num_pages, void (*entry)(void));
 void proc_grant_device(int pid, uint64_t device_pa);
+void proc_set_name(int pid, const char *name);
 
 // ---- syscall wrappers for userspace ----
 // these use svc to trap into the kernel
@@ -96,6 +97,14 @@ static inline int sys_call(int pid, const char *msg, uint64_t len,
                : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x8)
                : "memory");
   return (int)x0; // reply length
+}
+
+static inline int sys_procinfo(char *buf, uint64_t max) {
+  register uint64_t x0 asm("x0") = (uint64_t)buf;
+  register uint64_t x1 asm("x1") = max;
+  register uint64_t x8 asm("x8") = 7; // SYS_PROCINFO
+  asm volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x8) : "memory");
+  return (int)x0;
 }
 
 static inline int sys_reply(int pid, const char *msg, uint64_t len) {
@@ -918,6 +927,8 @@ void shell_task(uint64_t uart_base) {
         shell_puts(u, "  query <k> <v>   - find files by tag\n");
         shell_puts(u, "  tags <file>     - show file's tags\n");
         shell_puts(u, "  teled <file>    - text editor\n");
+        shell_puts(u, "  ps              - list running tasks\n");
+        shell_puts(u, "  top             - live task monitor\n");
         shell_puts(u, "  telfetch        - system info\n");
         shell_puts(u, "  clear           - clear screen\n");
         shell_puts(u, "  logout          - log out\n");
@@ -1038,6 +1049,65 @@ void shell_task(uint64_t uart_base) {
           }
         }
 
+      } else if (u_streq(argv[0], "ps")) {
+        char info[160]; // 8 procs * 20 bytes
+        int bytes = sys_procinfo(info, 160);
+        shell_puts(u, "PID  STATE    MEM     NAME\n");
+        for (int i = 0; i < bytes; i += 20) {
+          int pid = (uint8_t)info[i];
+          int state = (uint8_t)info[i + 1];
+          int pages = (uint8_t)info[i + 2];
+          char *name = &info[i + 4];
+          shell_put_int(u, pid);
+          shell_puts(u, "    ");
+          if (state == 1)
+            shell_puts(u, "ready   ");
+          else if (state == 2)
+            shell_puts(u, "running ");
+          else
+            shell_puts(u, "blocked ");
+          shell_put_int(u, pages * 4);
+          shell_puts(u, "K     ");
+          shell_puts(u, name);
+          shell_puts(u, "\n");
+        }
+
+      } else if (u_streq(argv[0], "top")) {
+        for (;;) {
+          shell_puts(u, "\033[2J\033[H"); // clear screen
+          shell_puts(u, "top - press any key to exit\n\n");
+          char info[160];
+          int bytes = sys_procinfo(info, 160);
+          shell_puts(u, "PID  STATE    MEM     NAME\n");
+          for (int i = 0; i < bytes; i += 20) {
+            int pid = (uint8_t)info[i];
+            int state = (uint8_t)info[i + 1];
+            int pages = (uint8_t)info[i + 2];
+            char *name = &info[i + 4];
+            shell_put_int(u, pid);
+            shell_puts(u, "    ");
+            if (state == 1)
+              shell_puts(u, "ready   ");
+            else if (state == 2)
+              shell_puts(u, "running ");
+            else
+              shell_puts(u, "blocked ");
+            shell_put_int(u, pages * 4);
+            shell_puts(u, "K     ");
+            shell_puts(u, name);
+            shell_puts(u, "\n");
+          }
+          // spin-delay ~1s
+          for (volatile int d = 0; d < 5000000; d++)
+            ;
+          // check for keypress (non-blocking)
+          if (!(u[0x18] & (1 << 4))) {
+            (void)u[0x00]; // consume the key
+            break;
+          }
+        }
+        shell_puts(u, "\033[2J\033[H");
+
       } else {
         shell_puts(u, "unknown command: ");
         shell_puts(u, argv[0]);
@@ -1072,10 +1142,14 @@ void main() {
   print("creating tasks\n");
   int uart_pid = proc_create(4, (void (*)(void))uart_server);
   proc_grant_device(uart_pid, 0x09000000);
-  proc_create(4, (void (*)(void))nameserver);
-  proc_create(4, (void (*)(void))fs_server);
+  proc_set_name(uart_pid, "uart");
+  int ns_pid = proc_create(4, (void (*)(void))nameserver);
+  proc_set_name(ns_pid, "nameserver");
+  int fs_pid = proc_create(4, (void (*)(void))fs_server);
+  proc_set_name(fs_pid, "fs");
   int shell_pid = proc_create(4, (void (*)(void))shell_task);
   proc_grant_device(shell_pid, 0x09000000);
+  proc_set_name(shell_pid, "shell");
   print("\n");
 
   asm volatile("msr daifclr, #2");
