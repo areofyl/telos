@@ -32,8 +32,17 @@ irq.o: irq.c
 pmm.o: pmm.c
 	$(CC) $(CFLAGS) -c pmm.c -o pmm.o
 
-kernel.elf: boot.o vectors.o main.o exception.o gic.o timer.o irq.o pmm.o linker.ld
-	$(LD) -T linker.ld boot.o vectors.o main.o exception.o gic.o timer.o irq.o pmm.o -o kernel.elf
+mmu.o: mmu.c
+	$(CC) $(CFLAGS) -mgeneral-regs-only -c mmu.c -o mmu.o
+
+proc.o: proc.c
+	$(CC) $(CFLAGS) -c proc.c -o proc.o
+
+syscall.o: syscall.c
+	$(CC) $(CFLAGS) -c syscall.c -o syscall.o
+
+kernel.elf: boot.o vectors.o main.o exception.o gic.o timer.o irq.o pmm.o mmu.o proc.o syscall.o linker.ld
+	$(LD) -T linker.ld boot.o vectors.o main.o exception.o gic.o timer.o irq.o pmm.o mmu.o proc.o syscall.o -o kernel.elf
 
 kernel.bin: kernel.elf
 	$(OBJCOPY) -O binary kernel.elf kernel.bin
