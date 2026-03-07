@@ -14,6 +14,9 @@ SECTIONS
     *(.rodata*)
   }
 
+  . = ALIGN(4096);
+  _rodata_end = .;
+
   .data : {
     *(.data*)
   }
