@@ -16,6 +16,7 @@ it's a SASOS (Single Address Space OS) — all tasks share one set of page table
 - nameserver so tasks can find each other by name
 - tag-based filesystem (no directories — files have key:value tags)
 - interactive shell to poke around the filesystem
+- built-in C compiler (tcc) — JIT compiles a subset of C to aarch64 and runs it
 
 ## the tag-based fs
 
@@ -35,6 +36,39 @@ telos> tags notes.txt
 ```
 
 it's kind of like how you'd search for files if folders didn't exist. still figuring out where to take this but it's a fun model to play with.
+
+## the C compiler
+
+there's a built-in C compiler (`cc` command) that JIT-compiles a subset of C directly to aarch64 machine code and runs it. no assembler, no linker — single-pass recursive descent that emits instructions into a buffer and jumps to it.
+
+```
+telos> cat hello.c
+int main() {
+  int i = 0;
+  while (i < 10) {
+    putc('0' + i);
+    putc('\n');
+    i = i + 1;
+  }
+  return 0;
+}
+telos> cc hello.c
+[cc] running...
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+
+[cc] exit code: 0
+```
+
+supports: `int` variables, `if`/`else`, `while`, arithmetic (`+ - * / %`), comparisons, `&&`/`||`, `putc()`, `getc()`, char/int literals, `return`.
 
 ## build
 
@@ -63,7 +97,7 @@ exit qemu: `ctrl+a` then `x`
 |------|------|
 | `boot.S` | entry, EL2 drop, stack setup, bss zeroing |
 | `vectors.S` | vector table, save/restore macros, syscall + irq entry |
-| `main.c` | everything userspace — uart server, nameserver, fs, shell, tasks |
+| `main.c` | everything userspace — uart server, nameserver, fs, shell, compiler, tasks |
 | `exception.c` | exception handler (ESR/ELR/FAR dump) |
 | `gic.c` | GIC distributor + cpu interface |
 | `timer.c` | arm generic timer, 1s tick |
@@ -71,7 +105,7 @@ exit qemu: `ctrl+a` then `x`
 | `pmm.c` | bitmap page allocator |
 | `mmu.c` | page tables, map/unmap, permission toggling, device mapping |
 | `proc.c` | process slots, scheduler, context switch |
-| `syscall.c` | syscall dispatch (write, yield, exit, send, recv, call, reply) |
+| `syscall.c` | syscall dispatch (write, yield, exit, send, recv, call, reply, cacheflush) |
 | `linker.ld` | memory layout |
 
 ## how it works
@@ -86,4 +120,4 @@ the fs server stores files in memory with tags instead of a directory tree. the 
 
 ## what's next
 
-not sure yet, just seeing where this goes. maybe pipes, maybe spawning tasks from the shell, maybe something else entirely.
+not sure yet, just seeing where this goes. maybe pipes, maybe spawning tasks from the shell, maybe porting to a raspberry pi, maybe something else entirely.
