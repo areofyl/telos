@@ -20,6 +20,12 @@ primary_core:
   // drop to EL1
   mov x0, #(1 << 31)
   msr hcr_el2, x0
+
+  // allow EL1 access to physical timer registers
+  mov x0, #3
+  msr cnthctl_el2, x0
+  msr cntvoff_el2, xzr
+
   mov x0, #0x3c5
   msr spsr_el2, x0
   adr x0, at_el1
