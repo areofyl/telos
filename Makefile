@@ -50,5 +50,8 @@ kernel.bin: kernel.elf
 run: kernel.bin
 	qemu-system-aarch64 -M virt -cpu cortex-a72 -nographic -kernel kernel.bin
 
+run-gui: kernel.bin
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -serial stdio -device ramfb -kernel kernel.bin
+
 clean:
 	rm -f *.o kernel.elf kernel.bin
