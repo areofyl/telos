@@ -9,9 +9,9 @@ void print_hex(unsigned long val);
 
 #define PAGE_SIZE 4096
 
-// qemu virt ram range
-#define RAM_START 0x40000000
-#define RAM_END   0x48000000
+// RPi 5 ram range (first 128MB, rest available but unused for now)
+#define RAM_START 0x00000000
+#define RAM_END   0x08000000
 #define TOTAL_PAGES ((RAM_END - RAM_START) / PAGE_SIZE)
 
 static uint8_t bitmap[TOTAL_PAGES / 8];
