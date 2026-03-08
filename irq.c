@@ -28,9 +28,7 @@ uint64_t irq_handler(uint64_t frame) {
         // let the scheduler decide if we should switch
         sp = schedule(sp);
     } else {
-        print("[irq] unexpected: ");
-        print_hex(intid);
-        print("\n");
+        // silently acknowledge unknown interrupts (e.g. RP1/PCIe spurious)
     }
 
     gic_eoi(iar);
