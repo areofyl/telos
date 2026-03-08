@@ -1,10 +1,50 @@
 #include <stdint.h>
 
 // uart
-// RPi 5 (BCM2712) PL011 UART0
-volatile uint8_t *uart = (volatile uint8_t *)0x107D001000;
+// RPi 5 RP1 UART0 (GPIO 14/15 on 40-pin header, via PCIe)
+#define UART_BASE       0x1F00030000UL
+#define UART_DR         (*(volatile uint32_t *)(UART_BASE + 0x00))
+#define UART_FR         (*(volatile uint32_t *)(UART_BASE + 0x18))
+#define UART_IBRD       (*(volatile uint32_t *)(UART_BASE + 0x24))
+#define UART_FBRD       (*(volatile uint32_t *)(UART_BASE + 0x28))
+#define UART_LCRH       (*(volatile uint32_t *)(UART_BASE + 0x2C))
+#define UART_CR         (*(volatile uint32_t *)(UART_BASE + 0x30))
+#define UART_IMSC       (*(volatile uint32_t *)(UART_BASE + 0x38))
+#define UART_ICR        (*(volatile uint32_t *)(UART_BASE + 0x44))
 
-void putchar(char c) { *uart = c; }
+#define FR_TXFF         (1 << 5)
+
+// keep old pointer for compatibility with rest of code
+volatile uint8_t *uart = (volatile uint8_t *)UART_BASE;
+
+void uart_init(void) {
+  // disable UART
+  UART_CR = 0;
+
+  // clear pending interrupts
+  UART_ICR = 0x7FF;
+
+  // set baud rate: 57600 with 50MHz clock
+  // IBRD = 50000000 / (16 * 57600) = 54
+  // FBRD = round(0.253 * 64) = 16
+  UART_IBRD = 54;
+  UART_FBRD = 16;
+
+  // 8 bits, no parity, 1 stop bit, enable FIFOs
+  UART_LCRH = (3 << 5) | (1 << 4);  // WLEN8 | FEN
+
+  // disable interrupts
+  UART_IMSC = 0;
+
+  // enable UART, TX, RX
+  UART_CR = (1 << 0) | (1 << 8) | (1 << 9);  // UARTEN | TXE | RXE
+}
+
+void putchar(char c) {
+  // wait until TX FIFO is not full
+  while (UART_FR & FR_TXFF);
+  UART_DR = c;
+}
 
 void print(const char *s) {
   while (*s) {
@@ -1739,6 +1779,7 @@ void shell_task(uint64_t uart_base) {
 // ---- entry point ----
 
 void main() {
+  uart_init();
   print("hello from telOS\n\n");
 
   print("setting up interrupts\n");
