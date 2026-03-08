@@ -1,7 +1,8 @@
 #include <stdint.h>
 
 // uart
-volatile uint8_t *uart = (volatile uint8_t *)0x09000000;
+// RPi 5 (BCM2712) PL011 UART0
+volatile uint8_t *uart = (volatile uint8_t *)0x107D001000;
 
 void putchar(char c) { *uart = c; }
 
@@ -1759,14 +1760,14 @@ void main() {
 
   print("creating tasks\n");
   int uart_pid = proc_create(4, (void (*)(void))uart_server);
-  proc_grant_device(uart_pid, 0x09000000);
+  proc_grant_device(uart_pid, 0x107D001000);
   proc_set_name(uart_pid, "uart");
   int ns_pid = proc_create(4, (void (*)(void))nameserver);
   proc_set_name(ns_pid, "nameserver");
   int fs_pid = proc_create(4, (void (*)(void))fs_server);
   proc_set_name(fs_pid, "fs");
   int shell_pid = proc_create(4, (void (*)(void))shell_task);
-  proc_grant_device(shell_pid, 0x09000000);
+  proc_grant_device(shell_pid, 0x107D001000);
   proc_set_name(shell_pid, "shell");
   print("\n");
 
