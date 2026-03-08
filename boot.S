@@ -2,6 +2,15 @@
 .global _start
 
 _start:
+  // RPi 5 has 4 cores — park cores 1-3
+  mrs x0, mpidr_el1
+  and x0, x0, #3
+  cbz x0, primary_core
+park:
+  wfe
+  b park
+
+primary_core:
   // check if we're at EL2
   mrs x0, CurrentEL
   lsr x0, x0, #2
