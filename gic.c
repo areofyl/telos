@@ -4,14 +4,14 @@
 // has a distributor (routes interrupts) and cpu interface (where cpu picks them up)
 // both mmio like uart
 
-// distributor
-#define GICD_BASE 0x08000000
+// RPi 5 (BCM2712) GIC-400 distributor
+#define GICD_BASE 0x107FFF9000
 #define GICD_CTLR (*(volatile uint32_t *)(GICD_BASE + 0x000))
 #define GICD_ISENABLER0 (*(volatile uint32_t *)(GICD_BASE + 0x100))
 #define GICD_IPRIORITY7 (*(volatile uint32_t *)(GICD_BASE + 0x41C))
 
-// cpu interface
-#define GICC_BASE 0x08010000
+// RPi 5 (BCM2712) GIC-400 cpu interface
+#define GICC_BASE 0x107FFFA000
 #define GICC_CTLR (*(volatile uint32_t *)(GICC_BASE + 0x000))
 #define GICC_PMR (*(volatile uint32_t *)(GICC_BASE + 0x004))
 #define GICC_IAR (*(volatile uint32_t *)(GICC_BASE + 0x00C))
