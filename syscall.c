@@ -40,6 +40,7 @@ uint64_t *ipc_reply(uint64_t *frame, int target, uint64_t msg_ptr, uint32_t len)
 #define SYS_REPLY  6
 #define SYS_PROCINFO 7
 #define SYS_CACHEFLUSH 8
+#define SYS_SPAWN  9
 
 // sys_write(buf, len) - print len bytes from buf, or until \0 if len=0
 static void do_write(uint64_t *frame) {
@@ -69,6 +70,7 @@ static uint64_t *do_exit(uint64_t *frame);
 // forward decl for proc functions we need
 void proc_exit_current(void);
 uint64_t proc_get_info(char *buf, uint64_t max);
+int proc_spawn(void *code_buf, uint32_t code_len, const char *name, uint64_t device_pa);
 
 static uint64_t *do_exit(uint64_t *frame) {
     proc_exit_current();
@@ -159,6 +161,18 @@ uint64_t syscall_handler(uint64_t frame_sp) {
         asm volatile("dsb ish");
         asm volatile("isb");
         frame[FRAME_X0] = 0;
+        return (uint64_t)frame;
+    }
+
+    case SYS_SPAWN: {
+        // spawn a new task from JIT code buffer
+        // x0 = code buffer, x1 = code length (bytes), x2 = name string
+        int new_pid = proc_spawn(
+            (void *)frame[FRAME_X0],
+            (uint32_t)frame[FRAME_X1],
+            (const char *)frame[FRAME_X2],
+            0x107D001000);  // RPi 5 UART PA — grant to spawned task
+        frame[FRAME_X0] = (uint64_t)new_pid;
         return (uint64_t)frame;
     }
 
