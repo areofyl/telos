@@ -37,6 +37,12 @@ void timer_init(void) {
     timer_interval = freq;
     write_cntp_tval(timer_interval);
 
+    // allow EL0 to read the physical counter (cntpct_el0)
+    uint64_t cntkctl;
+    asm volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
+    cntkctl |= 1;  // EL0PCTEN
+    asm volatile("msr cntkctl_el1, %0" : : "r"(cntkctl));
+
     // bit 0 = enable, bit 1 = mask (0 means not masked)
     write_cntp_ctl(1);
 
