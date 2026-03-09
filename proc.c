@@ -159,6 +159,9 @@ int proc_create(uint32_t num_pages, void (*entry)(void)) {
 #define FRAME_X3 31
 #define FRAME_X4 28
 
+// forward declarations
+void proc_set_name(int pid, const char *name);
+
 // device memory attributes: attr index 0 (device-nGnRnE), no shareability
 #define FLAGS_DEVICE 0
 
@@ -227,6 +230,60 @@ void proc_destroy(int pid) {
     print("[proc] destroyed pid ");
     print_hex(pid);
     print("\n");
+}
+
+// spawn a new task from a JIT code buffer
+// copies a trampoline + code into the task's slot, sets entry to trampoline
+// trampoline: bl code; mov x8,#2; svc #0  (auto sys_exit on return)
+// device_pa: if non-zero, grants this device MMIO page (e.g. UART)
+int proc_spawn(void *code_buf, uint32_t code_len, const char *name, uint64_t device_pa) {
+    // need at least 1 page for code + trampoline, plus stack page
+    int pid = proc_create(4, (void (*)(void))0);
+    if (pid < 0) return -1;
+
+    proc_t *p = &procs[pid];
+
+    // pages are mapped KERN_ONLY, so kernel can write into the slot
+    uint32_t *base = (uint32_t *)p->slot_base;
+
+    // trampoline (3 instructions):
+    //   bl +3        -> jump to compiled code at base[3]
+    //   mov x8, #2   -> SYS_EXIT
+    //   svc #0       -> trap to kernel
+    // when compiled code does 'ret', x30 = base+4 (after bl), so it hits mov+svc
+    base[0] = 0x94000003;  // bl +3
+    base[1] = 0xD2800048;  // mov x8, #2
+    base[2] = 0xD4000001;  // svc #0
+
+    // copy JIT code after trampoline
+    uint32_t *src = (uint32_t *)code_buf;
+    uint32_t num_insns = code_len / 4;
+    for (uint32_t i = 0; i < num_insns; i++)
+        base[3 + i] = src[i];
+
+    // fix entry point: ELR = slot_base (trampoline start)
+    uint64_t *frame = (uint64_t *)p->saved_sp;
+    frame[3] = p->slot_base;  // FRAME_ELR
+
+    // flush dcache + invalidate icache so CPU sees the new code
+    uint32_t total_bytes = (3 + num_insns) * 4;
+    for (uint32_t i = 0; i < total_bytes; i += 4) {
+        uint64_t va = p->slot_base + i;
+        asm volatile("dc cvau, %0" : : "r"(va));
+    }
+    asm volatile("dsb ish");
+    for (uint32_t i = 0; i < total_bytes; i += 4) {
+        uint64_t va = p->slot_base + i;
+        asm volatile("ic ivau, %0" : : "r"(va));
+    }
+    asm volatile("dsb ish");
+    asm volatile("isb");
+
+    if (device_pa)
+        proc_grant_device(pid, device_pa);
+    proc_set_name(pid, name);
+
+    return pid;
 }
 
 // kill the currently running task
