@@ -297,12 +297,12 @@ static inline int ns_lookup_wait(const char *name) {
 
 // ---- FS server (pid 2) ----
 
-#define FS_MAX_FILES 8
-#define FS_NAMELEN 16
-#define FS_DATALEN 1024
-#define FS_MAX_TAGS 4
-#define FS_KEYLEN 12
-#define FS_VALLEN 12
+#define FS_MAX_FILES 16
+#define FS_NAMELEN 32
+#define FS_DATALEN 4096
+#define FS_MAX_TAGS 8
+#define FS_KEYLEN 16
+#define FS_VALLEN 16
 
 typedef struct {
   char name[FS_NAMELEN];
@@ -325,10 +325,10 @@ void fs_server(void) {
   // register with nameserver
   ns_register("fs");
 
-  char buf[512];
+  char buf[FS_DATALEN + 64]; // enough for header + max file data
   for (;;) {
     uint64_t len;
-    int from = sys_recv2(buf, 511, &len);
+    int from = sys_recv2(buf, sizeof(buf) - 1, &len);
     buf[len] = '\0'; // ensure last field is null-terminated
 
     char op = buf[0];
@@ -559,7 +559,7 @@ void fs_server(void) {
 
 static inline void fs_write(int fs_pid, const char *name, const char *data,
                             uint64_t data_len) {
-  char buf[512];
+  char buf[FS_DATALEN + 64];
   char reply[4];
   buf[0] = 'W';
   u_strcpy(&buf[1], name);
@@ -711,11 +711,11 @@ static void teled_redraw(volatile uint8_t *u, const char *name, char *buf,
 }
 
 static void teled(volatile uint8_t *u, int fs_pid, const char *name) {
-  char buf[1024];
+  char buf[FS_DATALEN];
   int len = 0;
 
   // try to load existing file contents
-  int rlen = fs_read(fs_pid, name, buf, 1023);
+  int rlen = fs_read(fs_pid, name, buf, FS_DATALEN - 1);
   if (rlen > 0)
     len = rlen;
 
@@ -1390,8 +1390,8 @@ static void cc_block(cc_state_t *cc) {
 // compile source file into code_buf, return code length in instructions (-1 on error)
 static int cc_compile(volatile uint8_t *u, int fs_pid, const char *filename,
                       uint32_t *code_buf, int code_max) {
-  char src[1024];
-  int slen = fs_read(fs_pid, filename, src, 1023);
+  char src[FS_DATALEN];
+  int slen = fs_read(fs_pid, filename, src, FS_DATALEN - 1);
   if (slen <= 0) {
     shell_puts(u, "error: can't read file\n");
     return -1;
@@ -1821,8 +1821,8 @@ void shell_task(uint64_t uart_base) {
         if (argc < 2) {
           shell_puts(u, "usage: cat <file>\n");
         } else {
-          char data[256];
-          int rlen = fs_read(fs_pid, argv[1], data, 255);
+          char data[FS_DATALEN];
+          int rlen = fs_read(fs_pid, argv[1], data, FS_DATALEN - 1);
           if (rlen == 0) {
             shell_puts(u, "file not found or empty\n");
           } else {
@@ -2015,9 +2015,9 @@ void main() {
   proc_set_name(uart_pid, "uart");
   int ns_pid = proc_create(4, (void (*)(void))nameserver);
   proc_set_name(ns_pid, "nameserver");
-  int fs_pid = proc_create(4, (void (*)(void))fs_server);
+  int fs_pid = proc_create(24, (void (*)(void))fs_server);
   proc_set_name(fs_pid, "fs");
-  int shell_pid = proc_create(4, (void (*)(void))shell_task);
+  int shell_pid = proc_create(8, (void (*)(void))shell_task);
   proc_grant_device(shell_pid, 0x1F00030000);
   proc_set_name(shell_pid, "shell");
   print("\n");
