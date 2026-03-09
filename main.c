@@ -1495,6 +1495,172 @@ static void cc_spawn(volatile uint8_t *u, int fs_pid, const char *filename) {
   shell_puts(u, "\n");
 }
 
+// ---- snake game ----
+
+#define SNAKE_W 30
+#define SNAKE_H 15
+#define SNAKE_MAX 200
+
+static void snake_game(volatile uint8_t *u) {
+  // snake body stored as ring buffer of (x,y) pairs
+  uint8_t sx[SNAKE_MAX], sy[SNAKE_MAX];
+  int head = 0, tail = 0, len = 3;
+  int dx = 1, dy = 0; // moving right
+  int score = 0;
+  int alive = 1;
+
+  // init snake in the middle
+  for (int i = 0; i < len; i++) {
+    int idx = (head + i) % SNAKE_MAX;
+    sx[idx] = SNAKE_W / 2 - len + 1 + i;
+    sy[idx] = SNAKE_H / 2;
+  }
+  tail = 0;
+  head = len - 1;
+
+  // pseudo-random seed from timer
+  uint64_t seed;
+  asm volatile("mrs %0, cntpct_el0" : "=r"(seed));
+
+  // place food
+  int fx = (seed >> 4) % (SNAKE_W - 2) + 1;
+  int fy = (seed >> 12) % (SNAKE_H - 2) + 1;
+
+  shell_puts(u, "\033[?25l");   // hide cursor
+  shell_puts(u, "\033[2J\033[H"); // clear
+
+  while (alive) {
+    // ---- draw ----
+    shell_puts(u, "\033[H"); // cursor home
+
+    // score line
+    shell_puts(u, "\033[1;33m score: "); // bold yellow
+    shell_put_int(u, score);
+    shell_puts(u, "  \033[0m\n");
+
+    for (int y = 0; y < SNAKE_H; y++) {
+      for (int x = 0; x < SNAKE_W; x++) {
+        // border
+        if (y == 0 || y == SNAKE_H - 1 || x == 0 || x == SNAKE_W - 1) {
+          shell_puts(u, "\033[90m#\033[0m"); // dark gray
+          continue;
+        }
+
+        // check if snake body
+        int is_snake = 0;
+        int is_head = 0;
+        // walk from tail to head
+        int count = len;
+        int idx = tail;
+        while (count > 0) {
+          if (sx[idx] == (uint8_t)x && sy[idx] == (uint8_t)y) {
+            is_snake = 1;
+            if (idx == head) is_head = 1;
+            break;
+          }
+          idx = (idx + 1) % SNAKE_MAX;
+          count--;
+        }
+
+        if (is_head) {
+          shell_puts(u, "\033[1;32m@\033[0m"); // bright green
+        } else if (is_snake) {
+          shell_puts(u, "\033[32mo\033[0m"); // green
+        } else if (x == fx && y == fy) {
+          shell_puts(u, "\033[1;31m*\033[0m"); // bright red
+        } else {
+          shell_putc(u, ' ');
+        }
+      }
+      shell_putc(u, '\n');
+    }
+    shell_puts(u, " arrows/wasd to move | q to quit\n");
+
+    // ---- delay + input ----
+    // poll for input during the delay so keypresses aren't missed
+    // only check UART every 10000 iterations (MMIO reads are slow)
+    for (volatile int d = 0; d < 8000000; d++) {
+      if ((d % 10000) == 0 && !(u[0x18] & (1 << 4))) {
+        char c = u[0x00];
+        if (c == 'q') { alive = 0; break; }
+        if (c == 'w' && dy != 1)  { dx = 0; dy = -1; }
+        if (c == 's' && dy != -1) { dx = 0; dy = 1; }
+        if (c == 'a' && dx != 1)  { dx = -1; dy = 0; }
+        if (c == 'd' && dx != -1) { dx = 1; dy = 0; }
+        if (c == 0x1b) {
+          // arrow key: ESC [ A/B/C/D
+          for (volatile int w = 0; w < 100000; w++) ;
+          if (!(u[0x18] & (1 << 4))) {
+            char c2 = u[0x00];
+            if (c2 == '[' && !(u[0x18] & (1 << 4))) {
+              char c3 = u[0x00];
+              if (c3 == 'A' && dy != 1)  { dx = 0; dy = -1; }
+              if (c3 == 'B' && dy != -1) { dx = 0; dy = 1; }
+              if (c3 == 'C' && dx != -1) { dx = 1; dy = 0; }
+              if (c3 == 'D' && dx != 1)  { dx = -1; dy = 0; }
+            }
+          }
+        }
+      }
+    }
+
+    if (!alive) break;
+
+    // ---- move ----
+    int nx = (int)sx[head] + dx;
+    int ny = (int)sy[head] + dy;
+
+    // wall collision
+    if (nx <= 0 || nx >= SNAKE_W - 1 || ny <= 0 || ny >= SNAKE_H - 1) {
+      alive = 0;
+      break;
+    }
+
+    // self collision
+    int count = len;
+    int idx = tail;
+    while (count > 0) {
+      if (sx[idx] == (uint8_t)nx && sy[idx] == (uint8_t)ny) {
+        alive = 0;
+        break;
+      }
+      idx = (idx + 1) % SNAKE_MAX;
+      count--;
+    }
+    if (!alive) break;
+
+    // advance head
+    head = (head + 1) % SNAKE_MAX;
+    sx[head] = nx;
+    sy[head] = ny;
+
+    // check food
+    if (nx == fx && ny == fy) {
+      score++;
+      len++;
+      // new food position
+      seed = seed * 6364136223846793005ULL + 1;
+      fx = (seed >> 16) % (SNAKE_W - 2) + 1;
+      fy = (seed >> 24) % (SNAKE_H - 2) + 1;
+    } else {
+      // remove tail
+      tail = (tail + 1) % SNAKE_MAX;
+    }
+  }
+
+  // game over
+  shell_puts(u, "\033[H");
+  for (int i = 0; i < SNAKE_H / 2 + 1; i++) shell_putc(u, '\n');
+  shell_puts(u, "        \033[1;31m  GAME OVER\033[0m\n");
+  shell_puts(u, "        \033[1;33m  score: ");
+  shell_put_int(u, score);
+  shell_puts(u, "\033[0m\n\n");
+  shell_puts(u, "        press any key...\n");
+  shell_puts(u, "\033[?25h"); // show cursor
+  shell_getc(u); // wait for keypress
+  shell_puts(u, "\033[2J\033[H"); // clear
+}
+
 void shell_task(uint64_t uart_base) {
   volatile uint8_t *u = (volatile uint8_t *)uart_base;
 
@@ -1608,6 +1774,9 @@ void shell_task(uint64_t uart_base) {
           cc_spawn(u, fs_pid, argv[1]);
         }
 
+      } else if (u_streq(argv[0], "snake")) {
+        snake_game(u);
+
       } else if (u_streq(argv[0], "teled")) {
         if (argc < 2) {
           shell_puts(u, "usage: teled <file>\n");
@@ -1630,6 +1799,7 @@ void shell_task(uint64_t uart_base) {
         shell_puts(u, "  ps              - list running tasks\n");
         shell_puts(u, "  top             - live task monitor\n");
         shell_puts(u, "  telfetch        - system info\n");
+        shell_puts(u, "  snake           - play snake!\n");
         shell_puts(u, "  clear           - clear screen\n");
         shell_puts(u, "  help            - this message\n");
 
