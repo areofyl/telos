@@ -126,6 +126,15 @@ static inline int sys_reply(int pid, const char *msg, uint64_t len) {
   return (int)x0;
 }
 
+static inline int sys_spawn(void *code_buf, uint32_t code_len, const char *name) {
+  register uint64_t x0 asm("x0") = (uint64_t)code_buf;
+  register uint64_t x1 asm("x1") = (uint64_t)code_len;
+  register uint64_t x2 asm("x2") = (uint64_t)name;
+  register uint64_t x8 asm("x8") = 9; // SYS_SPAWN
+  asm volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
+  return (int)x0;
+}
+
 // ---- string utilities ----
 // static inline so they compile into EL0 task code
 
@@ -1340,18 +1349,16 @@ static void cc_block(cc_state_t *cc) {
   cc_expect(cc, '}');
 }
 
-// compile and run source code, uart_base passed for I/O
-static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
+// compile source file into code_buf, return code length in instructions (-1 on error)
+static int cc_compile(volatile uint8_t *u, int fs_pid, const char *filename,
+                      uint32_t *code_buf, int code_max) {
   char src[1024];
   int slen = fs_read(fs_pid, filename, src, 1023);
   if (slen <= 0) {
     shell_puts(u, "error: can't read file\n");
-    return;
+    return -1;
   }
   src[slen] = '\0';
-
-  // JIT buffer on stack
-  uint32_t code_buf[512]; // 2KB
 
   cc_state_t cc;
   cc.src = src;
@@ -1359,7 +1366,7 @@ static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
   cc.tok = 0;
   cc.code = code_buf;
   cc.code_len = 0;
-  cc.code_max = 512;
+  cc.code_max = code_max;
   cc.num_locals = 0;
   cc.stack_size = 0;
   cc.error = 0;
@@ -1372,7 +1379,7 @@ static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
   if (cc.tok == T_INT || cc.tok == T_VOID) cc_next(&cc);
   if (cc.tok != T_IDENT || !cc_kw(cc.ident, "main")) {
     shell_puts(u, "error: expected main()\n");
-    return;
+    return -1;
   }
   cc_next(&cc);
   cc_expect(&cc, '(');
@@ -1396,7 +1403,7 @@ static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
     shell_puts(u, "compile error: ");
     shell_puts(u, cc.errmsg);
     shell_puts(u, "\n");
-    return;
+    return -1;
   }
 
   // emit epilogue (for implicit return)
@@ -1411,8 +1418,17 @@ static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
   if (frame_size == 0) frame_size = 16;
   cc.code[stack_patch] = a64_sub_imm(31, 31, frame_size);
 
+  return cc.code_len;
+}
+
+// compile and run source code inline (same process)
+static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
+  uint32_t code_buf[512]; // 2KB
+  int code_len = cc_compile(u, fs_pid, filename, code_buf, 512);
+  if (code_len < 0) return;
+
   // flush icache
-  sys_cacheflush(code_buf, cc.code_len * 4);
+  sys_cacheflush(code_buf, code_len * 4);
 
   // run it! pass UART base as argument
   shell_puts(u, "[cc] running...\n");
@@ -1422,6 +1438,22 @@ static void cc_run(volatile uint8_t *u, int fs_pid, const char *filename) {
 
   shell_puts(u, "\n[cc] exit code: ");
   shell_put_int(u, result);
+  shell_puts(u, "\n");
+}
+
+// compile and spawn as a separate task
+static void cc_spawn(volatile uint8_t *u, int fs_pid, const char *filename) {
+  uint32_t code_buf[512]; // 2KB
+  int code_len = cc_compile(u, fs_pid, filename, code_buf, 512);
+  if (code_len < 0) return;
+
+  int pid = sys_spawn(code_buf, code_len * 4, filename);
+  if (pid < 0) {
+    shell_puts(u, "error: spawn failed (no free slots?)\n");
+    return;
+  }
+  shell_puts(u, "[run] spawned as pid ");
+  shell_put_int(u, pid);
   shell_puts(u, "\n");
 }
 
@@ -1440,7 +1472,7 @@ void shell_task(uint64_t uart_base) {
   shell_puts(u, "  \\__\\___|_|\\___/|____/\n");
   shell_puts(u, "\n");
   shell_puts(u, "Type 'help' for commands.\n");
-  shell_puts(u, "Try 'cat hello.c' then 'cc hello.c'\n\n");
+  shell_puts(u, "Try 'cat hello.c' then 'run hello.c'\n\n");
 
   // pre-create a sample hello.c
   fs_create(fs_pid, "hello.c");
@@ -1531,6 +1563,13 @@ void shell_task(uint64_t uart_base) {
           cc_run(u, fs_pid, argv[1]);
         }
 
+      } else if (u_streq(argv[0], "run")) {
+        if (argc < 2) {
+          shell_puts(u, "usage: run <file>\n");
+        } else {
+          cc_spawn(u, fs_pid, argv[1]);
+        }
+
       } else if (u_streq(argv[0], "teled")) {
         if (argc < 2) {
           shell_puts(u, "usage: teled <file>\n");
@@ -1548,7 +1587,8 @@ void shell_task(uint64_t uart_base) {
         shell_puts(u, "  query <k> <v>   - find files by tag\n");
         shell_puts(u, "  tags <file>     - show file's tags\n");
         shell_puts(u, "  teled <file>    - text editor\n");
-        shell_puts(u, "  cc <file>       - compile & run C\n");
+        shell_puts(u, "  cc <file>       - compile & run C (inline)\n");
+        shell_puts(u, "  run <file>      - compile & spawn as task\n");
         shell_puts(u, "  ps              - list running tasks\n");
         shell_puts(u, "  top             - live task monitor\n");
         shell_puts(u, "  telfetch        - system info\n");
