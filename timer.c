@@ -49,6 +49,19 @@ void timer_init(void) {
     print("[timer] armed for 1 second\n");
 }
 
+// per-core timer setup — CNTP registers are per-core (system regs, not MMIO)
+// each core has its own countdown that fires IRQ 30 independently
+void timer_init_percpu(void) {
+    // allow EL0 to read the counter on this core too
+    uint64_t cntkctl;
+    asm volatile("mrs %0, cntkctl_el1" : "=r"(cntkctl));
+    cntkctl |= 1;
+    asm volatile("msr cntkctl_el1, %0" : : "r"(cntkctl));
+
+    write_cntp_tval(timer_interval);
+    write_cntp_ctl(1);
+}
+
 // reset the countdown after each tick
 void timer_reset(void) {
     write_cntp_tval(timer_interval);
