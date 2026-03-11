@@ -2009,16 +2009,25 @@ static int psci_cpu_on(uint64_t target_cpu, uint64_t entry_point) {
 // entry point for secondary cores (called from boot.S secondary_entry)
 extern void secondary_entry(void);
 void mmu_init_secondary(void);
+void gic_init_percpu(void);
+void timer_init_percpu(void);
 
 void secondary_main(uint64_t core_id) {
     // enable MMU — reuses core 0's page tables
     mmu_init_secondary();
 
+    // each core needs its own GIC cpu interface + timer
+    gic_init_percpu();
+    timer_init_percpu();
+
     print("[smp] core ");
     print_hex(core_id);
-    print(" alive\n");
+    print(" alive, GIC + timer ready\n");
 
-    // idle for now — step 2 will add GIC + timer + scheduling
+    // unmask IRQs — this core will now receive timer ticks
+    asm volatile("msr daifclr, #2");
+
+    // idle loop — timer IRQ will call schedule() on this core
     for (;;)
         asm volatile("wfe");
 }
